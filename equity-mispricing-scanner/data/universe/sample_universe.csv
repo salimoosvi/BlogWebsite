@@ -1,0 +1,18 @@
+ticker,exchange,sector
+# Small illustrative slice. Replace with full index constituents.
+# Build a real universe via scanner.universe.fetch_sp500() or your own export.
+AAPL,NASDAQ,Information Technology
+MSFT,NASDAQ,Information Technology
+GOOGL,NASDAQ,Communication Services
+META,NASDAQ,Communication Services
+NVDA,NASDAQ,Information Technology
+JPM,NYSE,Financials
+BAC,NYSE,Financials
+XOM,NYSE,Energy
+CVX,NYSE,Energy
+PFE,NYSE,Health Care
+JNJ,NYSE,Health Care
+WMT,NYSE,Consumer Staples
+SHOP,TSX,Information Technology
+RY,TSX,Financials
+ENB,TSX,Energy
