@@ -134,6 +134,71 @@ def test_scoring_rejects_thin_evidence():
     assert not sc.qualifies
 
 
+def test_parse_constituents_basic():
+    import pandas as pd
+    from scanner.universe import parse_constituents
+    df = pd.DataFrame({
+        "Symbol": ["AAPL", "BRK.B", "MSFT"],
+        "Security": ["Apple", "Berkshire", "Microsoft"],
+        "GICS Sector": ["Information Technology", "Financials", "Information Technology"],
+    })
+    entries = parse_constituents(df, "US")
+    assert len(entries) == 3
+    assert entries[0].ticker == "AAPL"
+    assert entries[1].sector == "Financials"
+    assert all(e.exchange == "US" for e in entries)
+
+
+def test_parse_constituents_alt_headers_and_garbage():
+    import pandas as pd
+    from scanner.universe import parse_constituents
+    df = pd.DataFrame({
+        "Ticker symbol": ["RY", "ENB", "some footnote text here"],
+        "Sector": ["Financials", "Energy", None],
+    })
+    entries = parse_constituents(df, "TSX")
+    tickers = [e.ticker for e in entries]
+    assert "RY" in tickers and "ENB" in tickers
+    assert "SOME FOOTNOTE TEXT HERE" not in tickers   # space-containing row dropped
+
+
+def test_parse_constituents_no_symbol_col():
+    import pandas as pd
+    from scanner.universe import parse_constituents
+    df = pd.DataFrame({"Foo": [1, 2], "Bar": [3, 4]})
+    assert parse_constituents(df, "US") == []
+
+
+def test_merge_dedup_and_sector_backfill():
+    from scanner.universe import UniverseEntry, merge
+    a = [UniverseEntry("AAPL", "US", None), UniverseEntry("MSFT", "US", "Tech")]
+    b = [UniverseEntry("AAPL", "US", "Information Technology"),
+         UniverseEntry("NVDA", "NASDAQ", "Tech")]
+    out = merge(a, b)
+    by_key = {(e.ticker, e.exchange): e for e in out}
+    assert len(out) == 3
+    assert by_key[("AAPL", "US")].sector == "Information Technology"   # backfilled
+
+
+def test_yahoo_symbol_normalization():
+    from scanner.providers.yahoo import YahooProvider
+    f = YahooProvider.yahoo_symbol
+    assert f("BRK.B", "US") == "BRK-B"
+    assert f("AAPL", "NASDAQ") == "AAPL"
+    assert f("RY", "TSX") == "RY.TO"
+    assert f("CCL.B", "TSX") == "CCL-B.TO"
+    assert f("ENB.TO", "TSX") == "ENB.TO"   # already suffixed, not doubled
+
+
+def test_f_rejects_nan_and_bool():
+    from scanner.providers.yahoo import _f
+    assert _f({"a": float("nan")}, "a") is None
+    assert _f({"a": float("inf")}, "a") is None
+    assert _f({"a": True}, "a") is None        # bool is not a number here
+    assert _f({"a": 12.5}, "a") == 12.5
+    assert _f({"a": None, "b": 3}, "a", "b") == 3.0
+
+
 if __name__ == "__main__":
     import sys, traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

@@ -7,8 +7,10 @@ an exception. Network access to Yahoo's hosts is required at run time.
 """
 from __future__ import annotations
 
+import math
+import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..models import (AnalystChange, Fundamentals, InsiderTxn, NewsItem,
                       StockData)
@@ -23,9 +25,31 @@ except Exception:  # pragma: no cover - import guarded for environments w/o the 
 def _f(d: dict, *keys: str) -> Optional[float]:
     for k in keys:
         v = d.get(k)
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            return float(v)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            fv = float(v)
+            if math.isnan(fv) or math.isinf(fv):
+                continue
+            return fv
     return None
+
+
+def _retry(fn: Callable[[], Any], tries: int = 3, base: float = 0.6) -> Any:
+    """Run fn with small exponential backoff on transient failures.
+
+    Re-raises the last exception so the caller's guard can record a note.
+    """
+    last: Optional[Exception] = None
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 - transient network/parse errors
+            last = e
+            if i < tries - 1:
+                time.sleep(base * (2 ** i))
+    if last:
+        raise last
 
 
 def _ts_to_date(ts: Any) -> Optional[date]:
@@ -47,18 +71,29 @@ class YahooProvider:
             raise RuntimeError("yfinance is not installed (pip install yfinance)")
         self.history_period = history_period
 
+    @staticmethod
+    def yahoo_symbol(ticker: str, exchange: str | None) -> str:
+        """Convert a raw/display ticker to a Yahoo symbol.
+
+        US: dotted share classes use dashes (BRK.B -> BRK-B).
+        TSX: dashes + .TO suffix (CCL.B -> CCL-B.TO; RY -> RY.TO).
+        """
+        s = ticker.strip().upper()
+        if exchange == "TSX":
+            if s.endswith(".TO"):
+                return s
+            return s.replace(".", "-") + ".TO"
+        return s.replace(".", "-")
+
     def fetch(self, ticker: str, exchange: str | None = None) -> StockData:
-        symbol = ticker if "." in ticker or exchange != "TSX" else ticker
-        # TSX tickers on Yahoo use the .TO suffix.
-        if exchange == "TSX" and not symbol.endswith(".TO"):
-            symbol = f"{symbol}.TO"
+        symbol = self.yahoo_symbol(ticker, exchange)
 
         sd = StockData(ticker=ticker, exchange=exchange)
         t = yf.Ticker(symbol)
 
         info: dict = {}
         try:
-            info = t.get_info() or {}
+            info = _retry(lambda: t.get_info()) or {}
         except Exception as e:
             sd.note(f"info unavailable: {e}")
 
@@ -144,9 +179,10 @@ class YahooProvider:
         try:
             cols = list(q.columns)[:4]
             cols = list(reversed(cols))   # oldest -> newest
-            rev_row = self._row(q, "Total Revenue")
-            gp_row = self._row(q, "Gross Profit")
-            op_row = self._row(q, "Operating Income")
+            rev_row = self._row(q, "Total Revenue", "TotalRevenue", "Operating Revenue", "Revenue")
+            gp_row = self._row(q, "Gross Profit", "GrossProfit")
+            op_row = self._row(q, "Operating Income", "OperatingIncome",
+                               "Operating Income or Loss", "EBIT")
             for c in cols:
                 rev = self._cell(rev_row, c)
                 if not rev:
@@ -170,8 +206,8 @@ class YahooProvider:
             return
         try:
             cols = list(a.columns)        # newest first
-            rev_row = self._row(a, "Total Revenue")
-            eps_row = self._row(a, "Diluted EPS", "Basic EPS")
+            rev_row = self._row(a, "Total Revenue", "TotalRevenue", "Operating Revenue", "Revenue")
+            eps_row = self._row(a, "Diluted EPS", "DilutedEPS", "Basic EPS", "BasicEPS")
             if rev_row is not None and len(cols) >= 4:
                 new = self._cell(rev_row, cols[0])
                 old = self._cell(rev_row, cols[3])
@@ -188,9 +224,10 @@ class YahooProvider:
     def _technicals(self, sd: StockData, info: dict, t: Any) -> None:
         closes: list[float] = []
         try:
-            h = t.history(period=self.history_period, auto_adjust=True)
+            h = _retry(lambda: t.history(period=self.history_period, auto_adjust=True))
             if h is not None and not h.empty:
-                closes = [float(x) for x in h["Close"].dropna().tolist()]
+                closes = [float(x) for x in h["Close"].dropna().tolist()
+                          if x == x and not math.isinf(float(x))]
         except Exception as e:
             sd.note(f"price history unavailable: {e}")
         hi = _f(info, "fiftyTwoWeekHigh")
@@ -330,7 +367,7 @@ class YahooProvider:
             sd.note("historical P/E unavailable — own-5yr test will be skipped")
             return
         try:
-            eps_row = self._row(a, "Diluted EPS", "Basic EPS")
+            eps_row = self._row(a, "Diluted EPS", "DilutedEPS", "Basic EPS", "BasicEPS")
             if eps_row is None:
                 sd.note("no historical EPS row — own-5yr P/E skipped")
                 return

@@ -67,13 +67,38 @@ python -m scanner.cli --universe data/universe/sample_universe.csv --out report.
 Useful flags: `--top N`, `--max-per-sector N`, `--min-mcap-usd`, `--min-adv`,
 `--sleep` (seconds between fetches; be polite to the source), `--quiet`.
 
-### Universe
-`data/universe/sample_universe.csv` is a tiny illustrative slice. For the real
-mandate (S&P 500 + Nasdaq 100 + Russell 1000 + TSX Composite), supply a CSV of
-`ticker,exchange[,sector]`. `scanner.universe.fetch_sp500()` can pull S&P 500
-constituents from Wikipedia when network + `pandas`/`lxml` are available; the
-CSV remains the source of truth. TSX tickers are mapped to Yahoo's `.TO` suffix
-automatically when `exchange=TSX`.
+### First live run / debugging schema drift
+Yahoo's response shapes change over time. Before a full scan, dump one ticker
+to see exactly what populated and what didn't:
+
+```bash
+python -m scanner.cli --ticker AAPL --exchange NASDAQ
+python -m scanner.cli --ticker RY   --exchange TSX
+```
+
+This prints every field, the field-coverage ratio, counts of news/insider/
+analyst rows, the own-history P/E points, the screen verdict, and all
+data-quality notes — so a broken field-mapping surfaces immediately instead of
+silently yielding an empty scan. If coverage is near-zero with `info unavailable`
+notes, your network can't reach Yahoo (see above).
+
+### Building the universe
+`data/universe/sample_universe.csv` is a tiny illustrative slice. Build the real
+mandate universe (S&P 500 + Nasdaq 100 + Russell 1000 + TSX Composite) from
+index constituents:
+
+```bash
+python -m scanner.build_universe \
+    --indices sp500,nasdaq100,russell1000,tsx \
+    --out data/universe/full.csv
+```
+
+Each index is fetched independently — one source failing (page moved, schema
+changed, network blocked) is reported and skipped, not fatal — and the result
+is deduped across indices. Tickers are stored raw/human-readable; the Yahoo
+provider converts them to Yahoo symbols (`BRK.B`→`BRK-B`, `RY`→`RY.TO`,
+`CCL.B`→`CCL-B.TO`) at fetch time. Requires network + `pandas`/`lxml`. The CSV
+remains the source of truth — edit it freely.
 
 ## How qualification works
 
@@ -102,10 +127,12 @@ PYTHONPATH=. python tests/test_logic.py        # or: python -m pytest tests/ -q
 
 ```
 scanner/
-  cli.py            orchestration
+  cli.py            orchestration (+ --ticker single-name debug mode)
+  build_universe.py build a universe CSV from index constituents
+  debug.py          single-ticker field-coverage dump
   config.py         env-driven config
   models.py         normalized data models
-  universe.py       CSV / index-constituent loading
+  universe.py       CSV loading + Wikipedia constituent parsers
   screen.py         exclusion filters (mcap, ADV, ADR, earnings blackout)
   technicals.py     RSI, DMA, downtrend
   relative.py       sector + own-history SD cheapness flags

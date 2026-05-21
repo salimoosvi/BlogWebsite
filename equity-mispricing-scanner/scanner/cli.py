@@ -96,9 +96,26 @@ def run(universe_path: str, cfg: Config, out_path: str | None,
     return report
 
 
+def debug_one(ticker: str, exchange: str, cfg: Config) -> str:
+    """Fetch a single ticker and dump every field + data-quality note."""
+    from .debug import dump_stock
+    provider, enrichers = _build_providers(cfg)
+    sd = provider.fetch(ticker, exchange)
+    for en in enrichers:
+        try:
+            en.enrich(sd)
+        except Exception as ex:
+            sd.note(f"{en.name} enrich failed: {ex}")
+    screen_cfg = ScreenConfig(min_market_cap_usd=cfg.min_market_cap_usd,
+                              min_avg_volume=cfg.min_avg_volume, cad_usd=cfg.cad_usd)
+    return dump_stock(sd, screen_cfg)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Daily long-only mispricing scanner")
-    p.add_argument("--universe", required=True, help="CSV with ticker,exchange[,sector]")
+    p.add_argument("--universe", help="CSV with ticker,exchange[,sector]")
+    p.add_argument("--ticker", help="debug a single ticker (dumps all fields, no report)")
+    p.add_argument("--exchange", default="US", help="exchange for --ticker (US/NYSE/NASDAQ/TSX)")
     p.add_argument("--out", default=None, help="output markdown path (else stdout)")
     p.add_argument("--top", type=int, default=None, help="max names in report")
     p.add_argument("--max-per-sector", type=int, default=None)
@@ -109,6 +126,12 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     cfg = Config.from_env()
+
+    if args.ticker:
+        print(debug_one(args.ticker.upper(), args.exchange.upper(), cfg))
+        return 0
+    if not args.universe:
+        p.error("either --universe or --ticker is required")
     if args.top is not None:
         cfg.top_n = args.top
     if args.max_per_sector is not None:
