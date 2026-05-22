@@ -18,7 +18,7 @@ from .fairvalue import estimate
 from .relative import flag_stock, sector_medians
 from .report import Candidate, build_report
 from .scoring import score
-from .screen import ScreenConfig, screen_reasons
+from .screen import ScreenConfig, resolve_cap_tiers, screen_reasons
 from .universe import load_csv
 
 
@@ -46,6 +46,8 @@ def run(universe_path: str, cfg: Config, out_path: str | None,
     entries = load_csv(universe_path)
     provider, enrichers = _build_providers(cfg)
     screen_cfg = ScreenConfig(min_market_cap_usd=cfg.min_market_cap_usd,
+                              max_market_cap_usd=cfg.max_market_cap_usd,
+                              us_only=cfg.us_only,
                               min_avg_volume=cfg.min_avg_volume,
                               cad_usd=cfg.cad_usd)
 
@@ -107,6 +109,8 @@ def debug_one(ticker: str, exchange: str, cfg: Config) -> str:
         except Exception as ex:
             sd.note(f"{en.name} enrich failed: {ex}")
     screen_cfg = ScreenConfig(min_market_cap_usd=cfg.min_market_cap_usd,
+                              max_market_cap_usd=cfg.max_market_cap_usd,
+                              us_only=cfg.us_only,
                               min_avg_volume=cfg.min_avg_volume, cad_usd=cfg.cad_usd)
     return dump_stock(sd, screen_cfg)
 
@@ -120,12 +124,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--top", type=int, default=None, help="max names in report")
     p.add_argument("--max-per-sector", type=int, default=None)
     p.add_argument("--min-mcap-usd", type=float, default=None)
+    p.add_argument("--max-mcap-usd", type=float, default=None)
+    p.add_argument("--cap-tier", default=None,
+                   help="comma list of {mega,large,mid,small}; sets the mcap band "
+                        "(e.g. 'mega,large' -> $10B+). Explicit --min/--max-mcap-usd "
+                        "take precedence over the preset.")
+    p.add_argument("--us-only", action="store_true",
+                   help="exclude TSX / non-USD listings")
     p.add_argument("--min-adv", type=float, default=None)
     p.add_argument("--sleep", type=float, default=0.4, help="seconds between fetches")
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
 
     cfg = Config.from_env()
+    if args.cap_tier:
+        try:
+            lo, hi = resolve_cap_tiers(args.cap_tier.split(","))
+        except KeyError as e:
+            p.error(str(e))
+        cfg.min_market_cap_usd = lo
+        cfg.max_market_cap_usd = hi
+    if args.us_only:
+        cfg.us_only = True
 
     if args.ticker:
         print(debug_one(args.ticker.upper(), args.exchange.upper(), cfg))
@@ -138,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.max_per_sector = args.max_per_sector
     if args.min_mcap_usd is not None:
         cfg.min_market_cap_usd = args.min_mcap_usd
+    if args.max_mcap_usd is not None:
+        cfg.max_market_cap_usd = args.max_mcap_usd
     if args.min_adv is not None:
         cfg.min_avg_volume = args.min_adv
 

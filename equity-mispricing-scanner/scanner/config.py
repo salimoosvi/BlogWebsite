@@ -12,6 +12,8 @@ class Config:
     edgar_user_agent: Optional[str] = None
     cad_usd: float = 0.73
     min_market_cap_usd: float = 500_000_000
+    max_market_cap_usd: Optional[float] = None
+    us_only: bool = False
     min_avg_volume: float = 500_000
     max_per_sector: int = 3
     top_n: int = 10

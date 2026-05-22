@@ -64,8 +64,31 @@ export CAD_USD="0.73"                          # CAD->USD for the market-cap flo
 python -m scanner.cli --universe data/universe/sample_universe.csv --out report.md
 ```
 
-Useful flags: `--top N`, `--max-per-sector N`, `--min-mcap-usd`, `--min-adv`,
-`--sleep` (seconds between fetches; be polite to the source), `--quiet`.
+Useful flags: `--top N`, `--max-per-sector N`, `--min-mcap-usd`, `--max-mcap-usd`,
+`--min-adv`, `--sleep` (seconds between fetches; be polite to the source), `--quiet`.
+
+### Market-cap tiers & US-only
+`--cap-tier` sets the market-cap band from conventional USD tiers; `--us-only`
+drops TSX / non-USD listings at the screen (belt-and-suspenders on top of a
+US-only universe).
+
+| Tier | Band (USD) |
+|---|---|
+| `mega` | $200B+ |
+| `large` | $10B – $200B |
+| `mid` | $2B – $10B |
+| `small` | $300M – $2B |
+
+Pass a comma list; the band spans the union (an open-ended tier removes the
+ceiling). Explicit `--min-mcap-usd` / `--max-mcap-usd` take precedence.
+
+```bash
+# Mega + large cap, US market only (floor $10B, no ceiling):
+python -m scanner.build_universe --indices sp500,nasdaq100,russell1000 \
+    --out data/universe/us.csv          # note: no 'tsx'
+python -m scanner.cli --universe data/universe/us.csv \
+    --cap-tier mega,large --us-only --out report.md
+```
 
 ### First live run / debugging schema drift
 Yahoo's response shapes change over time. Before a full scan, dump one ticker

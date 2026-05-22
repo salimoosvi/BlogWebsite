@@ -90,6 +90,50 @@ def test_screen_filters():
     assert screen_reasons(good, cfg) == []
 
 
+def test_resolve_cap_tiers():
+    from scanner.screen import resolve_cap_tiers
+    # Mega + Large -> floor $10B, no ceiling.
+    lo, hi = resolve_cap_tiers(["mega", "large"])
+    assert lo == 10e9 and hi is None
+    # Large only -> $10B-$200B band.
+    lo, hi = resolve_cap_tiers(["large"])
+    assert lo == 10e9 and hi == 200e9
+    # Mid+small contiguous -> $300M-$10B.
+    lo, hi = resolve_cap_tiers(["small", "mid"])
+    assert lo == 300e6 and hi == 10e9
+    try:
+        resolve_cap_tiers(["enormous"])
+        assert False, "should raise on unknown tier"
+    except KeyError:
+        pass
+
+
+def test_max_cap_ceiling():
+    from scanner.screen import ScreenConfig, resolve_cap_tiers, screen_reasons
+    lo, hi = resolve_cap_tiers(["large"])
+    cfg = ScreenConfig(min_market_cap_usd=lo, max_market_cap_usd=hi)
+    mega = _stock("MEGA", "Tech", 25, mcap=500e9)   # above $200B ceiling
+    assert any("ceiling" in r for r in screen_reasons(mega, cfg))
+    large = _stock("LRG", "Tech", 25, mcap=50e9)
+    assert screen_reasons(large, cfg) == []
+    small = _stock("SML", "Tech", 25, mcap=3e9)     # below $10B floor
+    assert any("floor" in r for r in screen_reasons(small, cfg))
+
+
+def test_us_only_guard():
+    from scanner.screen import ScreenConfig, screen_reasons
+    cfg = ScreenConfig(us_only=True, min_market_cap_usd=10e9)
+    tsx = _stock("ENB", "Energy", 15, mcap=80e9)
+    tsx.exchange = "TSX"
+    tsx.currency = "CAD"
+    assert any("non-US" in r for r in screen_reasons(tsx, cfg))
+    us = _stock("AAPL", "Tech", 30, mcap=3000e9)
+    us.exchange = "NASDAQ"
+    us.currency = "USD"
+    # Mega-cap US name passes a US-only, $10B-floor (no ceiling) screen.
+    assert screen_reasons(us, cfg) == []
+
+
 def test_cad_conversion_in_screen():
     cfg = ScreenConfig(cad_usd=0.50, min_market_cap_usd=500e6)
     # 900M CAD * 0.50 = 450M USD -> below floor.
