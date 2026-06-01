@@ -41,8 +41,13 @@ def _build_providers(cfg: Config):
     return provider, enrichers
 
 
-def run(universe_path: str, cfg: Config, out_path: str | None,
-        sleep: float = 0.4, verbose: bool = True) -> str:
+def scan_universe(universe_path: str, cfg: Config,
+                  sleep: float = 0.4, verbose: bool = True) -> list[Candidate]:
+    """Run the full pipeline up to scored candidates (no report rendering).
+
+    This is the reusable entry point for the dashboard's preset runner and any
+    other caller that wants the structured result rather than the markdown.
+    """
     entries = load_csv(universe_path)
     provider, enrichers = _build_providers(cfg)
     screen_cfg = ScreenConfig(min_market_cap_usd=cfg.min_market_cap_usd,
@@ -68,9 +73,8 @@ def run(universe_path: str, cfg: Config, out_path: str | None,
             except Exception as ex:
                 sd.note(f"{en.name} enrich failed: {ex}")
         fetched.append(sd)
-        time.sleep(sleep)   # be polite to the data source
+        time.sleep(sleep)
 
-    # Screen.
     passed = []
     for sd in fetched:
         reasons = screen_reasons(sd, screen_cfg)
@@ -80,21 +84,41 @@ def run(universe_path: str, cfg: Config, out_path: str | None,
             continue
         passed.append(sd)
 
-    # Sector medians computed across the screened set.
     medians = sector_medians(passed)
-
     candidates: list[Candidate] = []
     for sd in passed:
         flags = flag_stock(sd, medians.get(sd.sector or "Unknown", {}), n_sd=cfg.n_sd)
         fv = estimate(sd, medians.get(sd.sector or "Unknown", {}))
         sc = score(sd, flags)
         candidates.append(Candidate(stock=sd, flags=flags, fair_value=fv, scorecard=sc))
+    return candidates
 
+
+def run(universe_path: str, cfg: Config, out_path: str | None,
+        sleep: float = 0.4, verbose: bool = True,
+        out_json: str | None = None, preset_name: str = "ad-hoc") -> str:
+    candidates = scan_universe(universe_path, cfg, sleep=sleep, verbose=verbose)
     report = build_report(candidates, top_n=cfg.top_n, max_per_sector=cfg.max_per_sector)
     if out_path:
         Path(out_path).write_text(report)
         if verbose:
             print(f"\nReport written to {out_path}", file=sys.stderr)
+    if out_json:
+        from .serialize import to_snapshot, write
+        config_summary = {
+            "min_market_cap_usd": cfg.min_market_cap_usd,
+            "max_market_cap_usd": cfg.max_market_cap_usd,
+            "us_only": cfg.us_only,
+            "min_avg_volume": cfg.min_avg_volume,
+            "n_sd": cfg.n_sd,
+            "max_per_sector": cfg.max_per_sector,
+            "top_n": cfg.top_n,
+            "universe": universe_path,
+        }
+        snap = to_snapshot(preset_name, config_summary, candidates)
+        write(snap, out_json)
+        if verbose:
+            print(f"Snapshot written to {out_json}", file=sys.stderr)
     return report
 
 
@@ -121,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ticker", help="debug a single ticker (dumps all fields, no report)")
     p.add_argument("--exchange", default="US", help="exchange for --ticker (US/NYSE/NASDAQ/TSX)")
     p.add_argument("--out", default=None, help="output markdown path (else stdout)")
+    p.add_argument("--out-json", default=None,
+                   help="also write a structured snapshot JSON for the dashboard")
+    p.add_argument("--preset-name", default="ad-hoc",
+                   help="tag for the snapshot (used by the dashboard)")
     p.add_argument("--top", type=int, default=None, help="max names in report")
     p.add_argument("--max-per-sector", type=int, default=None)
     p.add_argument("--min-mcap-usd", type=float, default=None)
@@ -163,7 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.min_adv is not None:
         cfg.min_avg_volume = args.min_adv
 
-    report = run(args.universe, cfg, args.out, sleep=args.sleep, verbose=not args.quiet)
+    report = run(args.universe, cfg, args.out, sleep=args.sleep, verbose=not args.quiet,
+                 out_json=args.out_json, preset_name=args.preset_name)
     if not args.out:
         print(report)
     return 0

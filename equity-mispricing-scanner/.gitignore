@@ -5,4 +5,5 @@ venv/
 *.egg-info/
 .env
 report*.md
+runs/
 .DS_Store

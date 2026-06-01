@@ -243,6 +243,84 @@ def test_f_rejects_nan_and_bool():
     assert _f({"a": None, "b": 3}, "a", "b") == 3.0
 
 
+def _synthetic_candidate(ticker="ZZZ", sector="Information Technology",
+                          conviction=4, qualifies=True):
+    import json
+    from scanner.fairvalue import estimate
+    from scanner.relative import flag_stock, sector_medians
+    from scanner.report import Candidate
+    from scanner.scoring import score
+    s = _stock(ticker, sector, 8, price=80, ret_1m=-0.15, above50=False)
+    s.history.pe = [25, 26, 24, 27, 25]
+    s.fundamentals.operating_margin_trend = [0.10, 0.12, 0.14, 0.16]
+    s.fundamentals.forward_eps = 10
+    s.sentiment.insider_buy_value_90d = 1e6
+    s.sentiment.insider_sell_value_90d = 0.0
+    s.news = []
+    # Build sector medians using a synthetic universe so flag_stock has stats.
+    medians = sector_medians([s] + [_stock(f"X{i}", sector, 30) for i in range(4)])
+    flags = flag_stock(s, medians[sector])
+    fv = estimate(s, medians[sector])
+    sc = score(s, flags)
+    return Candidate(stock=s, flags=flags, fair_value=fv, scorecard=sc)
+
+
+def test_serialize_roundtrip_to_json():
+    import json
+    from scanner.serialize import candidate_to_dict, dumps, to_snapshot
+    c = _synthetic_candidate()
+    d = candidate_to_dict(c)
+    assert d["stock"]["ticker"] == "ZZZ"
+    assert isinstance(d["scorecard"]["criteria_met"], int)
+    snap = to_snapshot("test_preset", {"foo": 1}, [c])
+    parsed = json.loads(dumps(snap))   # serializes dates etc. without raising
+    assert parsed["preset"] == "test_preset"
+    assert len(parsed["candidates"]) == 1
+    assert parsed["candidates"][0]["stock"]["ticker"] == "ZZZ"
+
+
+def test_dashboard_loader_and_filters(tmp_path=None):
+    import json
+    import os
+    import tempfile
+    from scanner.serialize import dumps, to_snapshot
+    from dashboard.loader import (filter_rows, latest_run_per_preset,
+                                  load_snapshots, to_rows)
+    tmpdir = tmp_path or tempfile.mkdtemp()
+    c_qual = _synthetic_candidate(ticker="QUAL", conviction=4)
+    c_unqual = _synthetic_candidate(ticker="MEH", conviction=0)
+    c_unqual.scorecard.c1_valuation = False
+    c_unqual.scorecard.c2_overpunished_news = False
+    c_unqual.scorecard.c3_sentiment_contradicts = False
+    c_unqual.scorecard.c4_fundamental_trend = False
+    c_unqual.scorecard.conviction = 0
+    assert not c_unqual.scorecard.qualifies   # computed from the four booleans
+
+    # Two presets, two timestamps each, so latest-only is testable.
+    for preset in ("alpha", "beta"):
+        for ts in ("20260101T000000Z", "20260601T000000Z"):
+            snap = to_snapshot(preset, {"n_sd": 1.0}, [c_qual, c_unqual])
+            snap["run_at"] = f"2026-01-01T00:00:00+00:00" if ts.startswith("20260101") \
+                else "2026-06-01T00:00:00+00:00"
+            path = os.path.join(tmpdir, "runs", preset, f"{ts}.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(dumps(snap))
+
+    snaps = load_snapshots(os.path.join(tmpdir, "runs"))
+    assert len(snaps) == 4
+    rows = to_rows(snaps)
+    assert len(rows) == 8                           # 4 snaps * 2 candidates
+    latest = latest_run_per_preset(rows)
+    assert len(latest) == 4                         # 2 presets * 2 candidates
+    qualified = filter_rows(latest, qualified_only=True)
+    assert all(r["qualifies"] for r in qualified)
+    assert {r["ticker"] for r in qualified} == {"QUAL"}
+    # criteria filter
+    c1_only = filter_rows(latest, criteria_any=["C1"], qualified_only=False)
+    assert all(r["c1"] for r in c1_only)
+
+
 if __name__ == "__main__":
     import sys, traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

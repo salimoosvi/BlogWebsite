@@ -1,0 +1,32 @@
+[
+  {
+    "name": "us_mega_large_standard",
+    "description": "US mega+large caps, 1 SD cheap threshold, sector cap 3 — the default screen.",
+    "universe": "data/universe/us.csv",
+    "cap_tier": ["mega", "large"],
+    "us_only": true,
+    "n_sd": 1.0,
+    "max_per_sector": 3,
+    "top_n": 10
+  },
+  {
+    "name": "us_mega_large_tight",
+    "description": "Same universe, 1.5 SD cheap threshold — fewer, higher-conviction names.",
+    "universe": "data/universe/us.csv",
+    "cap_tier": ["mega", "large"],
+    "us_only": true,
+    "n_sd": 1.5,
+    "max_per_sector": 3,
+    "top_n": 10
+  },
+  {
+    "name": "us_mid_value",
+    "description": "US mid caps ($2B-$10B), 1 SD threshold — smaller, more obscure names.",
+    "universe": "data/universe/us.csv",
+    "cap_tier": ["mid"],
+    "us_only": true,
+    "n_sd": 1.0,
+    "max_per_sector": 3,
+    "top_n": 10
+  }
+]

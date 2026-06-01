@@ -4,3 +4,5 @@ numpy>=1.24
 requests>=2.31
 # lxml is only needed for the optional Wikipedia universe fetch
 lxml>=4.9
+# dashboard
+streamlit>=1.30

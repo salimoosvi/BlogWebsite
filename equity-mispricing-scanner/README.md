@@ -123,6 +123,52 @@ provider converts them to Yahoo symbols (`BRK.B`→`BRK-B`, `RY`→`RY.TO`,
 `CCL.B`→`CCL-B.TO`) at fetch time. Requires network + `pandas`/`lxml`. The CSV
 remains the source of truth — edit it freely.
 
+## Dashboard
+
+A Streamlit dashboard browses snapshot results across multiple **presets** of
+the scan (same strategy, different parameter choices — cap tier, SD thresholds,
+sector cap). One strategy today; the snapshot schema is set up so additional
+strategies can be added later without breaking it.
+
+### 1. Define presets
+
+`presets/presets.json` ships with three samples. Add/remove freely:
+
+```json
+{
+  "name": "us_mega_large_standard",
+  "universe": "data/universe/us.csv",
+  "cap_tier": ["mega", "large"],
+  "us_only": true,
+  "n_sd": 1.0,
+  "max_per_sector": 3,
+  "top_n": 10
+}
+```
+
+### 2. Run all presets
+
+```bash
+python -m scanner.run_presets --presets presets/presets.json --out-dir runs
+# writes runs/<preset>/<UTC-timestamp>.json per preset
+```
+
+Each preset fetches independently — one failing doesn't kill the others. The
+single-scan CLI also writes a snapshot via `--out-json <path>` if you want
+ad-hoc runs to land in the same dashboard.
+
+### 3. Open the dashboard
+
+```bash
+streamlit run dashboard/app.py -- --runs runs
+```
+
+Sidebar filters: preset(s), latest-only toggle, qualified-only toggle, sector,
+exchange, conviction range (1-5), criteria fired (C1-C4), min upside. The
+detail pane shows the fired-criteria evidence, fair-value methods, recent news,
+data-quality notes, and a "same ticker across presets / runs" comparison so you
+can see whether a name shows up only in a tighter or looser parameter set.
+
 ## How qualification works
 
 A name qualifies only if **at least 2** of these hold (see `scanner/scoring.py`):
@@ -150,8 +196,10 @@ PYTHONPATH=. python tests/test_logic.py        # or: python -m pytest tests/ -q
 
 ```
 scanner/
-  cli.py            orchestration (+ --ticker single-name debug mode)
+  cli.py            orchestration (+ --ticker debug, --out-json snapshot)
+  run_presets.py    run every preset in presets/presets.json -> runs/<preset>/
   build_universe.py build a universe CSV from index constituents
+  serialize.py      Candidate -> snapshot JSON for the dashboard
   debug.py          single-ticker field-coverage dump
   config.py         env-driven config
   models.py         normalized data models
@@ -163,5 +211,10 @@ scanner/
   scoring.py        2-of-4 gate + conviction
   report.py         markdown report + thesis scaffolds
   providers/        yahoo (backbone), finnhub, sec_edgar
-tests/              offline logic tests
+dashboard/
+  app.py            Streamlit UI
+  loader.py         pure snapshot loading + filter chain (unit-tested)
+presets/
+  presets.json      named parameter sets driven by run_presets
+tests/              offline logic tests (21/21)
 ```
